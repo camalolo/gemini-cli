@@ -143,6 +143,7 @@ pub fn search_online(query: &str) -> String {
                     .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
                 let filtered_results: Vec<_> = scored_results
                     .into_iter()
+                    .take(3)
                     .filter(|(score, _, _, _)| *score >= RELEVANCE_THRESHOLD)
                     .map(|(_, title, link, content)| {
                         json!({
