@@ -1,6 +1,7 @@
 use chrono::Local;
 use colored::{Color, Colorize};
 use ctrlc;
+#[allow(unused_imports)]
 use dotenv::from_path;
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
@@ -9,9 +10,12 @@ use std::io::{self, Write};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use build_time::build_time_local;
+use landlock::{AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr};
+use std::os::unix::process::CommandExt;
 
 // Declare and import the search module
 mod search;
+#[allow(unused_imports)]
 use search::{search_online, scrape_url};
 
 const SANDBOX_ROOT: &str = ".";
@@ -168,46 +172,45 @@ impl ChatManager {
     }
 }
 
-fn execute_command(command: &str, skip_confirm: bool) -> String {
-    if !skip_confirm {
-        println!(
-            "{}Gemini wants to run the following command: {}",
-            "cyan".color(Color::Cyan).bold(),
-            command
-        );
-        print!(
-            "{}Press Enter to confirm, anything else to cancel: ",
-            "green".color(Color::Green)
-        );
-        io::stdout().flush().unwrap();
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
-        let input = input.trim();
-        if input.is_empty() {
-            println!("{}", "Command confirmed.".color(Color::Green));
-        } else {
-            return format!(
-                "Command canceled by user who asked the following: {}",
-                input
+fn execute_command(command: &str, _skip_confirm: bool) -> String {
+    let mut cmd = Command::new("sh"); // Using "sh" for Unix-like systems
+    cmd.arg("-c")
+        .arg(command)
+        .current_dir(SANDBOX_ROOT);
+
+    unsafe {
+        cmd.pre_exec(|| {
+            // Create a Landlock ruleset with specified filesystem access permissions
+            let ruleset = Ruleset::default()
+                .handle_access(
+                    AccessFs::Execute | AccessFs::ReadFile | AccessFs::WriteFile | AccessFs::ReadDir,
+                )
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?
+                .create()
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+
+            // Define a rule allowing access to SANDBOX_ROOT with the specified permissions
+            let path_fd = PathFd::new(SANDBOX_ROOT).map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+            })?;
+            let path_beneath = PathBeneath::new(
+                path_fd,
+                AccessFs::Execute | AccessFs::ReadFile | AccessFs::WriteFile | AccessFs::ReadDir,
             );
-        }
+
+            // Apply the ruleset to the current process (child process)
+            ruleset
+                .add_rule(path_beneath)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?
+                .restrict_self()
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+
+            Ok(())
+        });
     }
 
-    println!(
-        "{}",
-        format!("Executing command: {}", command).color(Color::Yellow)
-    );
-
-    let (shell, arg) = if cfg!(target_os = "windows") {
-        ("cmd", "/c")
-    } else {
-        ("sh", "-c")
-    };
-
-    let output = Command::new(shell)
-        .arg(arg)
-        .arg(command)
-        .current_dir(SANDBOX_ROOT)
+    // Execute the command and capture output
+    let output = cmd
         .output()
         .map(|out| {
             if out.status.success() {
@@ -216,16 +219,8 @@ fn execute_command(command: &str, skip_confirm: bool) -> String {
                 String::from_utf8_lossy(&out.stderr).to_string()
             }
         })
-        .unwrap_or_else(|e| {
-            format!("Error executing '{}': {}", command, e)
-                .color(Color::Red)
-                .to_string()
-        });
+        .unwrap_or_else(|e| format!("Error executing '{}': {}", command, e));
 
-    println!(
-        "{}",
-        format!("Command output: {}", output).color(Color::Yellow)
-    );
     output
 }
 
