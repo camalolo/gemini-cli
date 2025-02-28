@@ -97,6 +97,24 @@ impl ChatManager {
                                 },
                                 "required": ["subject", "body"]
                             }
+                        },
+                        {
+                            "name": "alpha_vantage_query",
+                            "description": "Query the Alpha Vantage API for stock/financial data",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "function": {
+                                        "type": "string",
+                                        "description": "The Alpha Vantage function (e.g., TIME_SERIES_DAILY)"
+                                    },
+                                    "symbol": {
+                                        "type": "string",
+                                        "description": "The stock symbol (e.g., IBM)"
+                                    }
+                                },
+                                "required": ["function", "symbol"]
+                            }
                         }
                     ]
                 }
@@ -234,6 +252,34 @@ fn send_email(subject: &str, body: &str) -> String {
         }
         Err(e) => format!("Error executing mail command: {}", e)
     }
+}
+
+fn alpha_vantage_query(function: &str, symbol: &str) -> Result<String, String> {
+    let api_key = env::var("ALPHA_VANTAGE_API_KEY")
+        .expect("ALPHA_VANTAGE_API_KEY not found in ~/.gemini");
+    let client = Client::new();
+    
+    let url = format!(
+        "https://www.alphavantage.co/query?function={}&symbol={}&apikey={}",
+        function, symbol, api_key
+    );
+    
+    println!(
+        "{} {}",
+        "Gemini is querying alpha vantage for:".color(Color::Cyan).bold(),
+        symbol
+    );
+
+    let response = client
+        .get(&url)
+        .send()
+        .map_err(|e| format!("Alpha Vantage API request failed: {}", e))?;
+    
+    let response_text = response
+        .text()
+        .map_err(|e| format!("Failed to parse Alpha Vantage response: {}", e))?;
+    
+    Ok(response_text)
 }
 
 fn display_response(response: &Value) {
@@ -442,6 +488,27 @@ fn main() {
                             } else {
                                 results.push(
                                     "[Tool error] send_email: Missing required parameters".to_string(),
+                                );
+                            }
+                        }
+                        "alpha_vantage_query" => {
+                            let function = args.get("function").and_then(|f| f.as_str());
+                            let symbol = args.get("symbol").and_then(|s| s.as_str());
+                            if let (Some(func), Some(sym)) = (function, symbol) {
+                                match alpha_vantage_query(func, sym) {
+                                    Ok(result) => results.push(format!(
+                                        "[Tool result] alpha_vantage_query: {}",
+                                        result
+                                    )),
+                                    Err(e) => results.push(format!(
+                                        "[Tool error] alpha_vantage_query: {}",
+                                        e
+                                    )),
+                                }
+                            } else {
+                                results.push(
+                                    "[Tool error] alpha_vantage_query: Missing required parameters"
+                                        .to_string(),
                                 );
                             }
                         }

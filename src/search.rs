@@ -74,11 +74,11 @@ pub fn search_online(query: &str) -> String {
                     
                     // Spawn a thread for each search result
                     let handle = thread::spawn(move || {
-                        println!(
-                            "{} {}",
-                            "Gemini is reading:".color(Color::Cyan).bold(),
-                            link
-                        );
+                        //println!(
+                        //    "{} {}",
+                        //    "Gemini is reading:".color(Color::Cyan).bold(),
+                        //    link
+                        //);
 
                         let content = match client_clone.get(&link).send() {
                             Ok(resp) => {
