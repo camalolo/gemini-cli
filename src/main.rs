@@ -1,7 +1,7 @@
 use chrono::Local;
 use colored::{Color, Colorize};
 use ctrlc;
-use dotenv::dotenv;
+use dotenv::from_path;
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use std::env;
@@ -199,7 +199,7 @@ fn execute_command(command: &str, skip_confirm: bool) -> String {
 
 fn send_email(subject: &str, body: &str) -> String {
 
-    let recipient = env::var("DESTINATION_EMAIL").expect("DESTINATION_EMAIL not found in .env file");
+    let recipient = env::var("DESTINATION_EMAIL").expect("DESTINATION_EMAIL not found in ~/.gemini");
     
     // Create a temporary file for the email body
     let temp_file = format!("/tmp/email_body_{}.txt", Local::now().timestamp());
@@ -245,7 +245,7 @@ fn display_response(response: &Value) {
             {
                 for part in parts {
                     if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                        println!("{}", text.color(Color::Blue));
+                        println!("{}", text.color(Color::Yellow));
                     }
                 }
             }
@@ -254,8 +254,8 @@ fn display_response(response: &Value) {
 }
 
 fn main() {
-    dotenv().ok();
-    let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not found in .env file");
+    dotenv::from_path(format!("{}/.gemini", env!("HOME"))).ok();
+    let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not found in ~/.gemini");
 
     let chat_manager = Arc::new(Mutex::new(ChatManager::new(api_key)));
     let chat_manager_clone = Arc::clone(&chat_manager);
@@ -334,7 +334,7 @@ fn main() {
             "" => {
                 println!(
                     "{}",
-                    "Please enter a command or message.".color(Color::Yellow)
+                    "Please enter a command or message.".color(Color::Red)
                 );
                 println!();
                 continue;

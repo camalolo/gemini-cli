@@ -11,10 +11,11 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 pub const RELEVANCE_THRESHOLD: f32 = 0.05;
+pub const NETWORK_TIMEOUT: u64 = 30;
 
 pub fn search_online(query: &str) -> String {
-    let api_key = env::var("GOOGLE_SEARCH_API_KEY").expect("GOOGLE_SEARCH_API_KEY not set");
-    let cx = env::var("GOOGLE_SEARCH_ENGINE_ID").expect("GOOGLE_SEARCH_ENGINE_ID not set");
+    let api_key = env::var("GOOGLE_SEARCH_API_KEY").expect("GOOGLE_SEARCH_API_KEY not found in ~/.gemini");
+    let cx = env::var("GOOGLE_SEARCH_ENGINE_ID").expect("GOOGLE_SEARCH_ENGINE_ID not found in ~/.gemini");
 
     println!(
         "{} {}",
@@ -24,7 +25,8 @@ pub fn search_online(query: &str) -> String {
     
     // Create a client with timeout
     let client = ClientBuilder::new()
-        .timeout(Duration::from_secs(5))
+        .connect_timeout(Duration::from_secs(NETWORK_TIMEOUT))
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
         .build()
         .unwrap_or_else(|_| Client::new());
         
@@ -118,7 +120,7 @@ pub fn search_online(query: &str) -> String {
                             },
                             Err(e) => {
                                 if e.is_timeout() {
-                                    format!("Skipped: Request timed out after 5 seconds")
+                                    format!("Skipped: Request timed out")
                                 } else if e.is_connect() {
                                     format!("Skipped: Connection error")
                                 } else {
