@@ -12,13 +12,22 @@ use std::sync::{Arc, Mutex};
 use build_time::build_time_local;
 use landlock::{AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr};
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
+use once_cell::sync::Lazy;
 
 // Declare and import the search module
 mod search;
 #[allow(unused_imports)]
 use search::{search_online, scrape_url};
 
-const SANDBOX_ROOT: &str = ".";
+static SANDBOX_ROOT: Lazy<String> = Lazy::new(|| {
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .to_string_lossy()
+        .to_string()
+});
 
 const COMPILE_TIME: &str = build_time_local!("%Y-%m-%d %H:%M:%S");
 
@@ -173,45 +182,104 @@ impl ChatManager {
 }
 
 fn execute_command(command: &str, _skip_confirm: bool) -> String {
-    let mut cmd = Command::new("sh"); // Using "sh" for Unix-like systems
-    cmd.arg("-c")
-        .arg(command)
-        .current_dir(SANDBOX_ROOT);
+    eprintln!("Sandbox root: {}", *SANDBOX_ROOT);
+
+    let mut parts = command.split_whitespace();
+    let cmd_name = match parts.next() {
+        Some(name) => name,
+        None => return "Error: No command provided".to_string(),
+    };
+    let args: Vec<&str> = parts.collect();
+
+    if cmd_name == "cd" {
+        return "Error: 'cd' is not supported in this sandboxed environment".to_string();
+    }
+
+    let mut cmd = Command::new(cmd_name);
+    cmd.args(&args).current_dir(&*SANDBOX_ROOT);
 
     unsafe {
         cmd.pre_exec(|| {
-            // Create a Landlock ruleset with specified filesystem access permissions
             let ruleset = Ruleset::default()
                 .handle_access(
                     AccessFs::Execute | AccessFs::ReadFile | AccessFs::WriteFile | AccessFs::ReadDir,
                 )
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?
-                .create()
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Ruleset handle_access failed: {}", e)))?;
 
-            // Define a rule allowing access to SANDBOX_ROOT with the specified permissions
-            let path_fd = PathFd::new(SANDBOX_ROOT).map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+            let created_ruleset = ruleset
+                .create()
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Ruleset create failed: {}", e)))?;
+
+            // Rule for SANDBOX_ROOT (full access)
+            let root_fd = PathFd::new(&*SANDBOX_ROOT).map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, format!("PathFd for sandbox root failed: {}", e))
             })?;
-            let path_beneath = PathBeneath::new(
-                path_fd,
+            let root_rule = PathBeneath::new(
+                root_fd,
                 AccessFs::Execute | AccessFs::ReadFile | AccessFs::WriteFile | AccessFs::ReadDir,
             );
 
-            // Apply the ruleset to the current process (child process)
-            ruleset
-                .add_rule(path_beneath)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?
+            // Rule for /bin
+            let bin_fd = PathFd::new("/bin").map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, format!("PathFd for /bin failed: {}", e))
+            })?;
+            let bin_rule = PathBeneath::new(bin_fd, AccessFs::Execute | AccessFs::ReadFile);
+
+            // Rule for /usr/bin (e.g., pwd)
+            let usr_bin_fd = PathFd::new("/usr/bin").map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, format!("PathFd for /usr/bin failed: {}", e))
+            })?;
+            let usr_bin_rule = PathBeneath::new(usr_bin_fd, AccessFs::Execute | AccessFs::ReadFile);
+
+            // Rule for /lib
+            let lib_fd = PathFd::new("/lib").map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, format!("PathFd for /lib failed: {}", e))
+            })?;
+            let lib_rule = PathBeneath::new(lib_fd, AccessFs::Execute | AccessFs::ReadFile);
+
+            // Rule for /usr/lib
+            let usr_lib_fd = PathFd::new("/usr/lib").map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, format!("PathFd for /usr/lib failed: {}", e))
+            })?;
+            let usr_lib_rule = PathBeneath::new(usr_lib_fd, AccessFs::Execute | AccessFs::ReadFile);
+
+            // Rule for /lib64 (common on 64-bit systems)
+            let lib64_fd = PathFd::new("/lib64").map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, format!("PathFd for /lib64 failed: {}", e))
+            })?;
+            let lib64_rule = PathBeneath::new(lib64_fd, AccessFs::Execute | AccessFs::ReadFile);
+
+            // Rule for /proc (for pwd and others)
+            let proc_fd = PathFd::new("/proc").map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, format!("PathFd for /proc failed: {}", e))
+            })?;
+            let proc_rule = PathBeneath::new(proc_fd, AccessFs::ReadFile);
+
+            eprintln!("Adding rules for: {}, /bin, /usr/bin, /lib, /usr/lib, /lib64, /proc", *SANDBOX_ROOT);
+
+            created_ruleset
+                .add_rule(root_rule)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Add sandbox root rule failed: {}", e)))?
+                .add_rule(bin_rule)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Add /bin rule failed: {}", e)))?
+                .add_rule(usr_bin_rule)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Add /usr/bin rule failed: {}", e)))?
+                .add_rule(lib_rule)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Add /lib rule failed: {}", e)))?
+                .add_rule(usr_lib_rule)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Add /usr/lib rule failed: {}", e)))?
+                .add_rule(lib64_rule)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Add /lib64 rule failed: {}", e)))?
+                .add_rule(proc_rule)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Add /proc rule failed: {}", e)))?
                 .restrict_self()
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Restrict self failed: {}", e)))?;
 
             Ok(())
         });
     }
 
-    // Execute the command and capture output
-    let output = cmd
-        .output()
+    cmd.output()
         .map(|out| {
             if out.status.success() {
                 String::from_utf8_lossy(&out.stdout).to_string()
@@ -219,9 +287,7 @@ fn execute_command(command: &str, _skip_confirm: bool) -> String {
                 String::from_utf8_lossy(&out.stderr).to_string()
             }
         })
-        .unwrap_or_else(|e| format!("Error executing '{}': {}", command, e));
-
-    output
+        .unwrap_or_else(|e| format!("Error executing '{}': {:?}", command, e))
 }
 
 fn send_email(subject: &str, body: &str) -> String {
@@ -334,7 +400,7 @@ fn main() {
     );
     println!(
         "{}",
-        format!("Working in sandbox: {}", SANDBOX_ROOT).color(Color::Cyan)
+        format!("Working in sandbox: {}", *SANDBOX_ROOT).color(Color::Cyan)
     );
     println!(
         "{}",
@@ -405,6 +471,7 @@ fn main() {
                 continue;
             }
             let output = execute_command(command, true);
+            println!("{}", format!("Command output: {}", output).color(Color::Magenta));
             let llm_input = format!("User ran command '!{}' with output: {}", command, output);
             match chat_manager.lock().unwrap().send_message(&llm_input) {
                 Ok(response) => display_response(&response),
