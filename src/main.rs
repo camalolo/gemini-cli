@@ -12,7 +12,7 @@ use build_time::build_time_local;
 
 // Declare and import the search module
 mod search;
-use search::search_online;
+use search::{search_online, scrape_url};
 
 const SANDBOX_ROOT: &str = ".";
 
@@ -114,6 +114,20 @@ impl ChatManager {
                                     }
                                 },
                                 "required": ["function", "symbol"]
+                            }
+                        },
+                        {
+                            "name": "scrape_url",
+                            "description": "Scrapes the content of a single URL",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "url": {
+                                        "type": "string",
+                                        "description": "The URL to scrape",
+                                    }
+                                },
+                                "required": ["url"]
                             }
                         }
                     ]
@@ -463,21 +477,33 @@ fn main() {
                                     "[Tool error] execute_command: Missing 'command' parameter"
                                         .to_string(),
                                 );
-                            }
-                        }
-                        "search_online" => {
-                            let query = args.get("query").and_then(|q| q.as_str());
-                            if let Some(q) = query {
-                                let result = search_online(q);
-                                //println!("Search result: {}", result); // Log the raw result
-                                results.push(format!("[Tool result] search_online: {}", result));
-                            } else {
-                                results.push(
-                                    "[Tool error] search_online: Missing 'query' parameter"
-                                        .to_string(),
-                                );
-                            }
-                        }
+                           }
+                       }
+                       "search_online" => {
+                           let query = args.get("query").and_then(|q| q.as_str());
+                           if let Some(q) = query {
+                               let result = search_online(q);
+                               //println!("Search result: {}", result); // Log the raw result
+                               results.push(format!("[Tool result] search_online: {}", result));
+                           } else {
+                               results.push(
+                                   "[Tool error] search_online: Missing 'query' parameter"
+                                       .to_string(),
+                               );
+                           }
+                       }
+                       "scrape_url" => {
+                           let url = args.get("url").and_then(|u| u.as_str());
+                           if let Some(u) = url {
+                               let result = search::scrape_url(u);
+                               results.push(format!("[Tool result] scrape_url: {}", result));
+                           } else {
+                               results.push(
+                                   "[Tool error] scrape_url: Missing 'url' parameter"
+                                       .to_string(),
+                               );
+                           }
+                       }
                         "send_email" => {
                             let subject = args.get("subject").and_then(|s| s.as_str());
                             let body = args.get("body").and_then(|b| b.as_str());

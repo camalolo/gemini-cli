@@ -57,7 +57,6 @@ pub fn search_online(query: &str) -> String {
                 
                 for item in item_values {
                     // Clone shared resources for the thread
-                    let client_clone = client.clone();
                     let search_results_clone = Arc::clone(&search_results);
                     
                     // Extract data before spawning the thread
@@ -74,60 +73,7 @@ pub fn search_online(query: &str) -> String {
                     
                     // Spawn a thread for each search result
                     let handle = thread::spawn(move || {
-                        //println!(
-                        //    "{} {}",
-                        //    "Gemini is reading:".color(Color::Cyan).bold(),
-                        //    link
-                        //);
-
-                        let content = match client_clone.get(&link).send() {
-                            Ok(resp) => {
-                                // Check status code first
-                                match resp.status() {
-                                    StatusCode::OK => {
-                                        match resp.text() {
-                                            Ok(text) => {
-                                                let document = Html::parse_document(&text);
-                                                // Target readable content: paragraphs, headings, articles
-                                                let selector = Selector::parse("p, h1, h2, h3, h4, h5, h6, article").unwrap();
-                                                let readable_text: Vec<String> = document
-                                                    .select(&selector)
-                                                    .flat_map(|element| {
-                                                        // Only include text from elements not inside script/style
-                                                        if element.value().name() != "script" && element.value().name() != "style" {
-                                                            element.text().map(|t| t.trim().to_string()).collect::<Vec<_>>()
-                                                        } else {
-                                                            Vec::new()
-                                                        }
-                                                    })
-                                                    .filter(|t| !t.is_empty()) // Skip empty strings
-                                                    .collect();
-                                                
-                                                if readable_text.is_empty() {
-                                                    "No readable content found on this page.".to_string()
-                                                } else {
-                                                    readable_text.join(" ")
-                                                }
-                                            }
-                                            Err(e) => format!("Error reading content: {}", e),
-                                        }
-                                    },
-                                    StatusCode::NOT_FOUND => "Skipped: 404 Not Found".to_string(),
-                                    StatusCode::FORBIDDEN => "Skipped: 403 Forbidden".to_string(),
-                                    StatusCode::INTERNAL_SERVER_ERROR => "Skipped: 500 Internal Server Error".to_string(),
-                                    status => format!("Skipped: HTTP status {}", status),
-                                }
-                            },
-                            Err(e) => {
-                                if e.is_timeout() {
-                                    format!("Skipped: Request timed out")
-                                } else if e.is_connect() {
-                                    format!("Skipped: Connection error")
-                                } else {
-                                    format!("Error fetching {}: {}", link, e)
-                                }
-                            }
-                        };
+                        let content = scrape_url(&link);
 
                         // Store the result in our shared vector
                         search_results_clone.lock().unwrap().push((title, link, content));
@@ -320,4 +266,68 @@ fn graph_similarity(query_graph: &HashMap<String, HashSet<String>>, doc_graph: &
     let edge_similarity = if shared_count == 0 { 0.0 } else { edge_similarity_sum / shared_count as f32 };
 
     0.5 * term_similarity + 0.5 * edge_similarity
+}
+
+pub fn scrape_url(url: &str) -> String {
+    println!(
+        "{} {}",
+        "Gemini is reading:".color(Color::Cyan).bold(),
+        url
+    );
+
+    // Create a client with timeout
+    let client = ClientBuilder::new()
+        .connect_timeout(Duration::from_secs(NETWORK_TIMEOUT))
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        .build()
+        .unwrap_or_else(|_| Client::new());
+
+    match client.get(url).send() {
+        Ok(resp) => {
+            // Check status code first
+            match resp.status() {
+                StatusCode::OK => {
+                    match resp.text() {
+                        Ok(text) => {
+                            let document = Html::parse_document(&text);
+                            // Target readable content: paragraphs, headings, articles
+                            let selector = Selector::parse("p, h1, h2, h3, h4, h5, h6, article").unwrap();
+                            let readable_text: Vec<String> = document
+                                .select(&selector)
+                                .flat_map(|element| {
+                                    // Only include text from elements not inside script/style
+                                    if element.value().name() != "script" && element.value().name() != "style" {
+                                        element.text().map(|t| t.trim().to_string()).collect::<Vec<_>>()
+                                    } else {
+                                        Vec::new()
+                                    }
+                                })
+                                .filter(|t| !t.is_empty()) // Skip empty strings
+                                .collect();
+
+                            if readable_text.is_empty() {
+                                "No readable content found on this page.".to_string()
+                            } else {
+                                readable_text.join(" ")
+                            }
+                        }
+                        Err(e) => format!("Error reading content: {}", e),
+                    }
+                },
+                StatusCode::NOT_FOUND => "Skipped: 404 Not Found".to_string(),
+                StatusCode::FORBIDDEN => "Skipped: 403 Forbidden".to_string(),
+                StatusCode::INTERNAL_SERVER_ERROR => "Skipped: 500 Internal Server Error".to_string(),
+                status => format!("Skipped: HTTP status {}", status),
+            }
+        },
+        Err(e) => {
+            if e.is_timeout() {
+                format!("Skipped: Request timed out")
+            } else if e.is_connect() {
+                format!("Skipped: Connection error")
+            } else {
+                format!("Error fetching {}: {}", url, e)
+            }
+        }
+    }
 }
