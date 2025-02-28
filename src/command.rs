@@ -51,7 +51,6 @@ fn start_sandbox() -> Result<(), String> {
                 "--private-tmp",
                 "--tmpfs=/tmp",
                 &format!("--name={}", sandbox.name),
-                "--net=none",
                 "--",
                 "/bin/sh",
             ])
