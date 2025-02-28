@@ -4,21 +4,28 @@ use colored::{Color, Colorize};
 use ctrlc;
 #[allow(unused_imports)]
 use dotenv::from_path;
-use landlock::{AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr};
 use once_cell::sync::Lazy;
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use std::env;
 use std::io::{self, Write};
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 // Declare and import the search module
 mod search;
 #[allow(unused_imports)]
 use search::{scrape_url, search_online};
+
+mod command;
+mod email;
+mod alpha_vantage;
+mod file_edit;
+
+use command::execute_command;
+use email::send_email;
+use alpha_vantage::alpha_vantage_query;
+use file_edit::file_editor;
 
 static SANDBOX_ROOT: Lazy<String> = Lazy::new(|| {
     std::env::current_dir()
@@ -142,6 +149,33 @@ impl ChatManager {
                                 },
                                 "required": ["url"]
                             }
+                        },
+                        {
+                            "name": "file_editor",
+                            "description": "Edit files in the sandbox with sub-commands: read, write, search, search_and_replace, apply_diff.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "subcommand": {
+                                        "type": "string",
+                                        "description": "The sub-command to execute: read, write, search, search_and_replace, apply_diff",
+                                        "enum": ["read", "write", "search", "search_and_replace", "apply_diff"]
+                                    },
+                                    "filename": {
+                                        "type": "string",
+                                        "description": "The name of the file in the sandbox to operate on"
+                                    },
+                                    "data": {
+                                        "type": "string",
+                                        "description": "Content to write (for write), regex pattern (for search/search_and_replace), or diff content (for apply_diff)"
+                                    },
+                                    "replacement": {
+                                        "type": "string",
+                                        "description": "Replacement text for search_and_replace"
+                                    }
+                                },
+                                "required": ["subcommand", "filename"]
+                            }
                         }
                     ]
                 }
@@ -183,256 +217,6 @@ impl ChatManager {
             }));
         }
     }
-}
-
-fn execute_command(command: &str, _skip_confirm: bool) -> String {
-    eprintln!("Sandbox root: {}", *SANDBOX_ROOT);
-
-    let mut parts = command.split_whitespace();
-    let cmd_name = match parts.next() {
-        Some(name) => name,
-        None => return "Error: No command provided".to_string(),
-    };
-    let args: Vec<&str> = parts.collect();
-
-    if cmd_name == "cd" {
-        return "Error: 'cd' is not supported in this sandboxed environment".to_string();
-    }
-
-    let mut cmd = Command::new(cmd_name);
-    cmd.args(&args).current_dir(&*SANDBOX_ROOT);
-
-    unsafe {
-        cmd.pre_exec(|| {
-            let ruleset = Ruleset::default()
-                .handle_access(
-                    AccessFs::Execute
-                        | AccessFs::ReadFile
-                        | AccessFs::WriteFile
-                        | AccessFs::ReadDir,
-                )
-                .map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Ruleset handle_access failed: {}", e),
-                    )
-                })?;
-
-            let created_ruleset = ruleset.create().map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Ruleset create failed: {}", e),
-                )
-            })?;
-
-            // Rule for SANDBOX_ROOT (full access)
-            let root_fd = PathFd::new(&*SANDBOX_ROOT).map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("PathFd for sandbox root failed: {}", e),
-                )
-            })?;
-            let root_rule = PathBeneath::new(
-                root_fd,
-                AccessFs::Execute | AccessFs::ReadFile | AccessFs::WriteFile | AccessFs::ReadDir,
-            );
-
-            // Rule for /bin
-            let bin_fd = PathFd::new("/bin").map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("PathFd for /bin failed: {}", e),
-                )
-            })?;
-            let bin_rule = PathBeneath::new(bin_fd, AccessFs::Execute | AccessFs::ReadFile);
-
-            // Rule for /usr/bin (e.g., pwd)
-            let usr_bin_fd = PathFd::new("/usr/bin").map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("PathFd for /usr/bin failed: {}", e),
-                )
-            })?;
-            let usr_bin_rule = PathBeneath::new(usr_bin_fd, AccessFs::Execute | AccessFs::ReadFile);
-
-            // Rule for /lib
-            let lib_fd = PathFd::new("/lib").map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("PathFd for /lib failed: {}", e),
-                )
-            })?;
-            let lib_rule = PathBeneath::new(lib_fd, AccessFs::Execute | AccessFs::ReadFile);
-
-            // Rule for /usr/lib
-            let usr_lib_fd = PathFd::new("/usr/lib").map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("PathFd for /usr/lib failed: {}", e),
-                )
-            })?;
-            let usr_lib_rule = PathBeneath::new(usr_lib_fd, AccessFs::Execute | AccessFs::ReadFile);
-
-            // Rule for /lib64 (common on 64-bit systems)
-            let lib64_fd = PathFd::new("/lib64").map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("PathFd for /lib64 failed: {}", e),
-                )
-            })?;
-            let lib64_rule = PathBeneath::new(lib64_fd, AccessFs::Execute | AccessFs::ReadFile);
-
-            // Rule for /proc (for pwd and others)
-            let proc_fd = PathFd::new("/proc").map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("PathFd for /proc failed: {}", e),
-                )
-            })?;
-            let proc_rule = PathBeneath::new(proc_fd, AccessFs::ReadFile);
-
-            eprintln!(
-                "Adding rules for: {}, /bin, /usr/bin, /lib, /usr/lib, /lib64, /proc",
-                *SANDBOX_ROOT
-            );
-
-            created_ruleset
-                .add_rule(root_rule)
-                .map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Add sandbox root rule failed: {}", e),
-                    )
-                })?
-                .add_rule(bin_rule)
-                .map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Add /bin rule failed: {}", e),
-                    )
-                })?
-                .add_rule(usr_bin_rule)
-                .map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Add /usr/bin rule failed: {}", e),
-                    )
-                })?
-                .add_rule(lib_rule)
-                .map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Add /lib rule failed: {}", e),
-                    )
-                })?
-                .add_rule(usr_lib_rule)
-                .map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Add /usr/lib rule failed: {}", e),
-                    )
-                })?
-                .add_rule(lib64_rule)
-                .map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Add /lib64 rule failed: {}", e),
-                    )
-                })?
-                .add_rule(proc_rule)
-                .map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Add /proc rule failed: {}", e),
-                    )
-                })?
-                .restrict_self()
-                .map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Restrict self failed: {}", e),
-                    )
-                })?;
-
-            Ok(())
-        });
-    }
-
-    cmd.output()
-        .map(|out| {
-            if out.status.success() {
-                String::from_utf8_lossy(&out.stdout).to_string()
-            } else {
-                String::from_utf8_lossy(&out.stderr).to_string()
-            }
-        })
-        .unwrap_or_else(|e| format!("Error executing '{}': {:?}", command, e))
-}
-
-fn send_email(subject: &str, body: &str) -> String {
-    let recipient =
-        env::var("DESTINATION_EMAIL").expect("DESTINATION_EMAIL not found in ~/.gemini");
-
-    // Create a temporary file for the email body
-    let temp_file = format!("/tmp/email_body_{}.txt", Local::now().timestamp());
-    if let Ok(mut file) = std::fs::File::create(&temp_file) {
-        if let Err(e) = file.write_all(body.as_bytes()) {
-            return format!("Failed to write email body to temporary file: {}", e);
-        }
-    } else {
-        return "Failed to create temporary file for email body".to_string();
-    }
-
-    // Use the mail command to send the email
-    let mail_cmd = format!("mail -s \"{}\" {} < {}", subject, recipient, temp_file);
-    let output = Command::new("sh").arg("-c").arg(&mail_cmd).output();
-
-    // Clean up the temporary file
-    let _ = std::fs::remove_file(&temp_file);
-
-    match output {
-        Ok(out) => {
-            if out.status.success() {
-                format!("Email sent successfully to {}", recipient)
-            } else {
-                format!(
-                    "Failed to send email: {}",
-                    String::from_utf8_lossy(&out.stderr)
-                )
-            }
-        }
-        Err(e) => format!("Error executing mail command: {}", e),
-    }
-}
-
-fn alpha_vantage_query(function: &str, symbol: &str) -> Result<String, String> {
-    let api_key =
-        env::var("ALPHA_VANTAGE_API_KEY").expect("ALPHA_VANTAGE_API_KEY not found in ~/.gemini");
-    let client = Client::new();
-
-    let url = format!(
-        "https://www.alphavantage.co/query?function={}&symbol={}&apikey={}",
-        function, symbol, api_key
-    );
-
-    println!(
-        "{} {}",
-        "Gemini is querying alpha vantage for:"
-            .color(Color::Cyan)
-            .bold(),
-        symbol
-    );
-
-    let response = client
-        .get(&url)
-        .send()
-        .map_err(|e| format!("Alpha Vantage API request failed: {}", e))?;
-
-    let response_text = response
-        .text()
-        .map_err(|e| format!("Failed to parse Alpha Vantage response: {}", e))?;
-
-    Ok(response_text)
 }
 
 fn display_response(response: &Value) {
@@ -547,7 +331,7 @@ fn main() {
                 println!();
                 continue;
             }
-            let output = execute_command(command, true);
+            let output = execute_command(command);
             println!(
                 "{}",
                 format!("Command output: {}", output).color(Color::Magenta)
@@ -612,7 +396,7 @@ fn main() {
                         "execute_command" => {
                             let command = args.get("command").and_then(|c| c.as_str());
                             if let Some(cmd) = command {
-                                let result = execute_command(cmd, false);
+                                let result = execute_command(cmd);
                                 results.push(format!("[Tool result] execute_command: {}", result));
                             } else {
                                 results.push(
@@ -679,6 +463,19 @@ fn main() {
                                     "[Tool error] alpha_vantage_query: Missing required parameters"
                                         .to_string(),
                                 );
+                            }
+                        }
+                        "file_editor" => {
+                            let subcommand = args.get("subcommand").and_then(|s| s.as_str());
+                            let filename = args.get("filename").and_then(|f| f.as_str());
+                            let data = args.get("data").and_then(|d| d.as_str());
+                            let replacement = args.get("replacement").and_then(|r| r.as_str());
+
+                            if let (Some(subcmd), Some(fname)) = (subcommand, filename) {
+                                let result = file_editor(subcmd, fname, data, replacement);
+                                results.push(format!("[Tool result] file_editor: {}", result));
+                            } else {
+                                results.push("[Tool error] file_editor: Missing required parameters 'subcommand' or 'filename'".to_string());
                             }
                         }
                         _ => {
