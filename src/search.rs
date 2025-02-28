@@ -1,10 +1,14 @@
 use std::collections::{HashMap, HashSet};
-use reqwest::blocking::Client;
+use reqwest::blocking::{Client, ClientBuilder};
+use reqwest::StatusCode;
+use std::time::Duration;
 use scraper::{Html, Selector};
 use serde_json::{json, Value};
 use std::env;
 use urlencoding;
 use colored::{Color, Colorize};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 pub const RELEVANCE_THRESHOLD: f32 = 0.05;
 
@@ -18,7 +22,12 @@ pub fn search_online(query: &str) -> String {
         query
     );
     
-    let client = Client::new();
+    // Create a client with timeout
+    let client = ClientBuilder::new()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap_or_else(|_| Client::new());
+        
     let url = format!(
         "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}",
         api_key,
@@ -34,59 +43,107 @@ pub fn search_online(query: &str) -> String {
             };
             let items = json.get("items").and_then(|i| i.as_array());
             if let Some(items) = items {
-                let mut search_results = Vec::new();
-
-                for item in items {
+                // Convert items to a Vec we can use for parallel processing
+                let item_values: Vec<Value> = items.iter().cloned().collect();
+                
+                // Create thread-safe results container
+                let search_results: Arc<Mutex<Vec<(String, String, String)>>> = 
+                    Arc::new(Mutex::new(Vec::with_capacity(item_values.len())));
+                
+                // Create threads for parallel scraping
+                let mut handles = vec![];
+                
+                for item in item_values {
+                    // Clone shared resources for the thread
+                    let client_clone = client.clone();
+                    let search_results_clone = Arc::clone(&search_results);
+                    
+                    // Extract data before spawning the thread
                     let title = item
                         .get("title")
                         .and_then(|t| t.as_str())
-                        .unwrap_or("No title");
+                        .unwrap_or("No title")
+                        .to_string();
                     let link = item
                         .get("link")
                         .and_then(|l| l.as_str())
-                        .unwrap_or("No link");
+                        .unwrap_or("No link")
+                        .to_string();
+                    
+                    // Spawn a thread for each search result
+                    let handle = thread::spawn(move || {
+                        println!(
+                            "{} {}",
+                            "Gemini is reading:".color(Color::Cyan).bold(),
+                            link
+                        );
 
-                    println!(
-                        "{} {}",
-                        "Gemini is reading:".color(Color::Cyan).bold(),
-                        link
-                    );
-
-                    let content = match client.get(link).send() {
-                        Ok(resp) if resp.status().is_success() => {
-                            match resp.text() {
-                                Ok(text) => {
-                                    let document = Html::parse_document(&text);
-                                    // Target readable content: paragraphs, headings, articles
-                                    let selector = Selector::parse("p, h1, h2, h3, h4, h5, h6, article").unwrap();
-                                    let readable_text: Vec<String> = document
-                                        .select(&selector)
-                                        .flat_map(|element| {
-                                            // Only include text from elements not inside script/style
-                                            if element.value().name() != "script" && element.value().name() != "style" {
-                                                element.text().map(|t| t.trim().to_string()).collect::<Vec<_>>()
-                                            } else {
-                                                Vec::new()
+                        let content = match client_clone.get(&link).send() {
+                            Ok(resp) => {
+                                // Check status code first
+                                match resp.status() {
+                                    StatusCode::OK => {
+                                        match resp.text() {
+                                            Ok(text) => {
+                                                let document = Html::parse_document(&text);
+                                                // Target readable content: paragraphs, headings, articles
+                                                let selector = Selector::parse("p, h1, h2, h3, h4, h5, h6, article").unwrap();
+                                                let readable_text: Vec<String> = document
+                                                    .select(&selector)
+                                                    .flat_map(|element| {
+                                                        // Only include text from elements not inside script/style
+                                                        if element.value().name() != "script" && element.value().name() != "style" {
+                                                            element.text().map(|t| t.trim().to_string()).collect::<Vec<_>>()
+                                                        } else {
+                                                            Vec::new()
+                                                        }
+                                                    })
+                                                    .filter(|t| !t.is_empty()) // Skip empty strings
+                                                    .collect();
+                                                
+                                                if readable_text.is_empty() {
+                                                    "No readable content found on this page.".to_string()
+                                                } else {
+                                                    readable_text.join(" ")
+                                                }
                                             }
-                                        })
-                                        .filter(|t| !t.is_empty()) // Skip empty strings
-                                        .collect();
-                                    
-                                    if readable_text.is_empty() {
-                                        "No readable content found on this page.".to_string()
-                                    } else {
-                                        readable_text.join(" ")
-                                    }
+                                            Err(e) => format!("Error reading content: {}", e),
+                                        }
+                                    },
+                                    StatusCode::NOT_FOUND => "Skipped: 404 Not Found".to_string(),
+                                    StatusCode::FORBIDDEN => "Skipped: 403 Forbidden".to_string(),
+                                    StatusCode::INTERNAL_SERVER_ERROR => "Skipped: 500 Internal Server Error".to_string(),
+                                    status => format!("Skipped: HTTP status {}", status),
                                 }
-                                Err(e) => format!("Error reading content: {}", e),
+                            },
+                            Err(e) => {
+                                if e.is_timeout() {
+                                    format!("Skipped: Request timed out after 5 seconds")
+                                } else if e.is_connect() {
+                                    format!("Skipped: Connection error")
+                                } else {
+                                    format!("Error fetching {}: {}", link, e)
+                                }
                             }
-                        }
-                        Ok(resp) => format!("Skipped due to HTTP status: {}", resp.status()),
-                        Err(e) => format!("Error fetching {}: {}", link, e),
-                    };
+                        };
 
-                    search_results.push((title.to_string(), link.to_string(), content));
+                        // Store the result in our shared vector
+                        search_results_clone.lock().unwrap().push((title, link, content));
+                    });
+                    
+                    handles.push(handle);
                 }
+                
+                // Wait for all threads to complete
+                for handle in handles {
+                    let _ = handle.join();
+                }
+                
+                // Get the results from the Mutex
+                let search_results = Arc::try_unwrap(search_results)
+                    .expect("Arc still has multiple owners")
+                    .into_inner()
+                    .expect("Mutex is poisoned");
 
                 let documents: Vec<&str> = search_results
                     .iter()
@@ -143,7 +200,7 @@ pub fn search_online(query: &str) -> String {
                     .collect();
 
                 if filtered_results.is_empty() {
-                    "No relevant results found, please try a different search query.".to_string()
+                    "No relevant results found, please ask the user if your should try a different search query.".to_string()
                 } else {
                     serde_json::to_string(&filtered_results)
                         .unwrap_or("Error serializing results".to_string())
@@ -152,10 +209,17 @@ pub fn search_online(query: &str) -> String {
                 "No results found.".to_string()
             }
         }
-        Err(e) => format!("Search failed: {}", e),
+        Err(e) => {
+            if e.is_timeout() {
+                "Search failed: Request timed out".to_string()
+            } else {
+                format!("Search failed: {}", e)
+            }
+        }
     }
 }
 
+// The rest of the functions remain unchanged
 pub struct TfIdf {
     pub vocab: HashSet<String>,
     pub idf: HashMap<String, f32>,

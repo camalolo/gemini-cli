@@ -8,12 +8,15 @@ use std::env;
 use std::io::{self, Write};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
+use build_time::build_time_local;
 
 // Declare and import the search module
 mod search;
 use search::search_online;
 
 const SANDBOX_ROOT: &str = ".";
+
+const COMPILE_TIME: &str = build_time_local!("%Y-%m-%d %H:%M:%S");
 
 struct ChatManager {
     api_key: String,
@@ -26,7 +29,7 @@ impl ChatManager {
     fn new(api_key: String) -> Self {
         let today = Local::now().format("%Y-%m-%d").to_string();
         let system_instruction = format!(
-            "Today's date is {}. You are a proactive coding assistant running in a sandboxed Linux terminal environment with a full set of command line utilities. Your role is to assist with coding tasks, file operations, and shell commands efficiently and decisively. Assume the current directory (the sandbox root) is the target for all commands. Take initiative to provide solutions, execute commands, and analyze results immediately without asking for confirmation unless the action is explicitly ambiguous (e.g., multiple repos) or potentially destructive (e.g., deleting files). Use the `execute_command` tool to interact with the system when needed, and deliver concise, clear responses. After running a command, always summarize its output immediately and proceed with logical next steps, without waiting for the user to prompt you further. When reading files or executing commands, summarize the results intelligently for the user without dumping raw output unless explicitly requested. Stay within the sandbox directory. Users can run shell commands directly with `!`, and you'll receive the output to assist further. Act confidently and anticipate the user's needs to streamline their workflow.",
+            "Today's date is {}. You are a proactive assistant running in a sandboxed Linux terminal environment with a full set of command line utilities. Your role is to assist with coding tasks, file operations, online searches, email sending, and shell commands efficiently and decisively. Assume the current directory (the sandbox root) is the target for all commands. Take initiative to provide solutions, execute commands, and analyze results immediately without asking for confirmation unless the action is explicitly ambiguous (e.g., multiple repos) or potentially destructive (e.g., deleting files). Use the `execute_command` tool to interact with the system when needed, and deliver concise, clear responses. After running a command, always summarize its output immediately and proceed with logical next steps, without waiting for the user to prompt you further. When reading files or executing commands, summarize the results intelligently for the user without dumping raw output unless explicitly requested. Stay within the sandbox directory. Users can run shell commands directly with `!`, and you'll receive the output to assist further. Act confidently and anticipate the user's needs to streamline their workflow.",
             today
         );
         ChatManager {
@@ -81,6 +84,18 @@ impl ChatManager {
                                     "command": {"type": "string"}
                                 },
                                 "required": ["command"]
+                            }
+                        },
+                        {
+                            "name": "send_email",
+                            "description": "Sends an email to a fixed address using the local mail system.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "subject": {"type": "string", "description": "Email subject line"},
+                                    "body": {"type": "string", "description": "Email message body"}
+                                },
+                                "required": ["subject", "body"]
                             }
                         }
                     ]
@@ -182,6 +197,45 @@ fn execute_command(command: &str, skip_confirm: bool) -> String {
     output
 }
 
+fn send_email(subject: &str, body: &str) -> String {
+
+    let recipient = env::var("DESTINATION_EMAIL").expect("DESTINATION_EMAIL not found in .env file");
+    
+    // Create a temporary file for the email body
+    let temp_file = format!("/tmp/email_body_{}.txt", Local::now().timestamp());
+    if let Ok(mut file) = std::fs::File::create(&temp_file) {
+        if let Err(e) = file.write_all(body.as_bytes()) {
+            return format!("Failed to write email body to temporary file: {}", e);
+        }
+    } else {
+        return "Failed to create temporary file for email body".to_string();
+    }
+    
+    // Use the mail command to send the email
+    let mail_cmd = format!("mail -s \"{}\" {} < {}", subject, recipient, temp_file);
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(&mail_cmd)
+        .output();
+    
+    // Clean up the temporary file
+    let _ = std::fs::remove_file(&temp_file);
+    
+    match output {
+        Ok(out) => {
+            if out.status.success() {
+                format!("Email sent successfully to {}", recipient)
+            } else {
+                format!(
+                    "Failed to send email: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                )
+            }
+        }
+        Err(e) => format!("Error executing mail command: {}", e)
+    }
+}
+
 fn display_response(response: &Value) {
     if let Some(candidates) = response.get("candidates").and_then(|c| c.as_array()) {
         for candidate in candidates {
@@ -202,8 +256,6 @@ fn display_response(response: &Value) {
 fn main() {
     dotenv().ok();
     let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not found in .env file");
-    let _ = env::var("GOOGLE_SEARCH_API_KEY").expect("GOOGLE_SEARCH_API_KEY not set");
-    let _ = env::var("GOOGLE_SEARCH_ENGINE_ID").expect("GOOGLE_SEARCH_ENGINE_ID not set");
 
     let chat_manager = Arc::new(Mutex::new(ChatManager::new(api_key)));
     let chat_manager_clone = Arc::clone(&chat_manager);
@@ -220,6 +272,10 @@ fn main() {
         "Welcome to Gemini Code! Chat with me (type 'exit' to quit, 'clear' to reset conversation)."
             .color(Color::Cyan)
             .bold()
+    );
+    println!(
+        "{}",
+        format!("Version: {}", COMPILE_TIME).color(Color::Cyan)
     );
     println!(
         "{}",
@@ -373,6 +429,19 @@ fn main() {
                                 results.push(
                                     "[Tool error] search_online: Missing 'query' parameter"
                                         .to_string(),
+                                );
+                            }
+                        }
+                        "send_email" => {
+                            let subject = args.get("subject").and_then(|s| s.as_str());
+                            let body = args.get("body").and_then(|b| b.as_str());
+                            
+                            if let (Some(subj), Some(bod)) = (subject, body) {
+                                let result = send_email(subj, bod);
+                                results.push(format!("[Tool result] send_email: {}", result));
+                            } else {
+                                results.push(
+                                    "[Tool error] send_email: Missing required parameters".to_string(),
                                 );
                             }
                         }
