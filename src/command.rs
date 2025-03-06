@@ -1,9 +1,9 @@
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
-use std::process::{Command, Child, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 struct Sandbox {
     child: Option<Child>,
@@ -40,20 +40,24 @@ fn start_sandbox() -> Result<(), String> {
         eprintln!("Starting sandbox: {}", sandbox.name);
         eprintln!("Sandbox root: {}", *SANDBOX_ROOT);
 
+        let mut args = vec![
+            "--quiet".to_string(),
+            "--noprofile".to_string(),
+            "--read-only=/".to_string(),
+            "--read-only=/var/tmp".to_string(),
+            format!("--tmpfs={}", *SANDBOX_ROOT),
+            "--tmpfs=/tmp".to_string(),
+            "--caps.drop=all".to_string(),
+            "--seccomp".to_string(),
+            "--noroot".to_string(),
+            format!("--name={}", sandbox.name),
+        ];
+
+        args.push("--".to_string());
+        args.push("/bin/sh".to_string());
+
         let child = Command::new("firejail")
-            .args([
-                "--quiet",
-                "--noprofile",
-                &format!("--whitelist={}", *SANDBOX_ROOT),
-                "--caps.drop=all",
-                "--seccomp",
-                "--noroot",
-                "--private-tmp",
-                "--tmpfs=/tmp",
-                &format!("--name={}", sandbox.name),
-                "--",
-                "/bin/sh",
-            ])
+            .args(args)
             .current_dir(&*SANDBOX_ROOT)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -64,7 +68,8 @@ fn start_sandbox() -> Result<(), String> {
         sandbox.child = Some(child);
 
         // Wait until the sandbox is listed as active
-        for _ in 0..10 { // Retry up to 10 times (1 second total)
+        for _ in 0..10 {
+            // Retry up to 10 times (1 second total)
             let output = Command::new("firejail")
                 .arg("--list")
                 .output()
