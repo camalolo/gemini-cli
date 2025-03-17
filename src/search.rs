@@ -28,7 +28,7 @@ pub fn search_online(query: &str) -> String {
     // Create a client with timeout
     let client = ClientBuilder::new()
         .connect_timeout(Duration::from_secs(NETWORK_TIMEOUT))
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
         .build()
         .unwrap_or_else(|_| Client::new());
 
