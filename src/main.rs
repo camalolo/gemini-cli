@@ -183,7 +183,7 @@ impl ChatManager {
         });
 
         let response = client
-            .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent")
+            .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
             .query(&[("key", &self.api_key)])
             .json(&body)
             .send()
