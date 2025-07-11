@@ -21,11 +21,13 @@ mod command;
 mod email;
 mod alpha_vantage;
 mod file_edit;
+mod spinner; // Spinner module
 
 use command::execute_command;
 use email::send_email;
 use alpha_vantage::alpha_vantage_query;
 use file_edit::file_editor;
+use crate::spinner::Spinner; // Import the Spinner
 
 static SANDBOX_ROOT: Lazy<String> = Lazy::new(|| {
     std::env::current_dir()
@@ -182,12 +184,17 @@ impl ChatManager {
             ]
         });
 
+        let mut spinner = Spinner::new();
+        spinner.start();
+
         let response = client
             .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
             .query(&[("key", &self.api_key)])
             .json(&body)
             .send()
             .map_err(|e| format!("API request failed: {}", e))?;
+
+        spinner.stop();
 
         let response_json: Value = response
             .json()
@@ -234,6 +241,7 @@ fn display_response(response: &Value) {
             }
         }
     }
+    println!(); // Add a newline after the response
 }
 
 fn main() {
@@ -396,6 +404,7 @@ fn main() {
                         "execute_command" => {
                             let command = args.get("command").and_then(|c| c.as_str());
                             if let Some(cmd) = command {
+                                println!("Executing command: {}", cmd.color(Color::Magenta));
                                 let result = execute_command(cmd);
                                 results.push(format!("[Tool result] execute_command: {}", result));
                             } else {
