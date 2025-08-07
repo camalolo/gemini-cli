@@ -6,9 +6,11 @@ use ctrlc;
 use dotenv::from_path;
 use once_cell::sync::Lazy;
 use reqwest::blocking::Client;
+use rustyline::error::ReadlineError;
+use rustyline::Editor;
+use rustyline::history::DefaultHistory;
 use serde_json::{json, Value};
 use std::env;
-use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -51,7 +53,7 @@ impl ChatManager {
     fn new(api_key: String) -> Self {
         let today = Local::now().format("%Y-%m-%d").to_string();
         let system_instruction = format!(
-            "Today's date is {}. You are a proactive assistant running in a sandboxed Linux terminal environment with a full set of command line utilities. Your role is to assist with coding tasks, file operations, online searches, email sending, and shell commands efficiently and decisively. Assume the current directory (the sandbox root) is the target for all commands. Take initiative to provide solutions, execute commands, and analyze results immediately without asking for confirmation unless the action is explicitly ambiguous (e.g., multiple repos) or potentially destructive (e.g., deleting files). Use the `execute_command` tool to interact with the system when needed, and deliver concise, clear responses. After running a command, always summarize its output immediately and proceed with logical next steps, without waiting for the user to prompt you further. When reading files or executing commands, summarize the results intelligently for the user without dumping raw output unless explicitly requested. Stay within the sandbox directory. Users can run shell commands directly with `!`, and you'll receive the output to assist further. Act confidently and anticipate the user's needs to streamline their workflow.",
+            "Today's date is {}. You are a proactive assistant running in a sandboxed Linux terminal environment with a full set of command line utilities. Your role is to assist with coding tasks, file operations, online searches, email sending, and shell commands efficiently and decisively. Assume the current directory (the sandbox root) is the target for all commands. Take initiative to provide solutions, execute commands, and analyze results immediately without asking for confirmation unless the action is explicitly ambiguous (e.g., multiple repos) or potentially destructive (e.g., deleting files). Use the `execute_command` tool to interact with the system but only when needed. Deliver concise, clear responses. After running a command, always summarize its output immediately and proceed with logical next steps, without waiting for the user to prompt you further. When reading files or executing commands, summarize the results intelligently for the user without dumping raw output unless explicitly requested. Stay within the sandbox directory. Users can run shell commands directly with `!`, and you'll receive the output to assist further. Act confidently and anticipate the user's needs to streamline their workflow.",
             today
         );
         ChatManager {
@@ -188,7 +190,7 @@ impl ChatManager {
         spinner.start();
 
         let response = client
-            .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
+            .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent")
             .query(&[("key", &self.api_key)])
             .json(&body)
             .send()
@@ -278,6 +280,7 @@ fn main() {
     );
     println!();
 
+    let mut rl = Editor::<(), DefaultHistory>::new().expect("Failed to initialize rustyline");
     loop {
         let conv_length: usize = {
             let manager = chat_manager.lock().unwrap();
@@ -299,212 +302,222 @@ fn main() {
                 .sum()
         };
 
-        print!(
-            "{}",
-            format!("[{}] > ", conv_length).color(Color::Green).bold()
-        );
-        io::stdout().flush().unwrap();
+        let prompt = format!("[{}] > ", conv_length).color(Color::Green).bold().to_string();
 
-        let mut user_input = String::new();
-        io::stdin().read_line(&mut user_input).unwrap();
-        let user_input = user_input.trim();
-        println!();
+        match rl.readline(&prompt) {
+            Ok(user_input) => {
+                let user_input = user_input.trim();
+                println!();
 
-        match user_input.to_lowercase().as_str() {
-            "exit" => {
-                println!("{}", "Goodbye!".color(Color::Cyan).bold());
-                break;
-            }
-            "clear" => {
-                chat_manager.lock().unwrap().create_chat();
-                println!(
-                    "{}",
-                    "Conversation cleared! Starting fresh.".color(Color::Cyan)
-                );
-                println!();
-                continue;
-            }
-            "" => {
-                println!("{}", "Please enter a command or message.".color(Color::Red));
-                println!();
-                continue;
-            }
-            _ => {}
-        }
+                match user_input.to_lowercase().as_str() {
+                    "exit" => {
+                        println!("{}", "Goodbye!".color(Color::Cyan).bold());
+                        break;
+                    }
+                    "clear" => {
+                        chat_manager.lock().unwrap().create_chat();
+                        println!(
+                            "{}",
+                            "Conversation cleared! Starting fresh.".color(Color::Cyan)
+                        );
+                        println!();
+                        continue;
+                    }
+                    "" => {
+                        println!("{}", "Please enter a command or message.".color(Color::Red));
+                        println!();
+                        continue;
+                    }
+                    _ => {}
+                }
 
-        if user_input.starts_with('!') {
-            let command = user_input[1..].trim();
-            if command.is_empty() {
-                println!("{}", "No command provided after '!'.".color(Color::Red));
-                println!();
-                continue;
-            }
-            let output = execute_command(command);
-            println!(
-                "{}",
-                format!("Command output: {}", output).color(Color::Magenta)
-            );
-            let llm_input = format!("User ran command '!{}' with output: {}", command, output);
-            match chat_manager.lock().unwrap().send_message(&llm_input) {
-                Ok(response) => display_response(&response),
-                Err(e) => println!("{}", format!("Error: {}", e).color(Color::Red)),
-            }
-        } else {
-            let mut response = match chat_manager.lock().unwrap().send_message(user_input) {
-                Ok(resp) => resp,
-                Err(e) => {
+                if user_input.starts_with('!') {
+                    let command = user_input[1..].trim();
+                    if command.is_empty() {
+                        println!("{}", "No command provided after '!'.".color(Color::Red));
+                        println!();
+                        continue;
+                    }
+                    let output = execute_command(command);
                     println!(
                         "{}",
-                        format!("Error: A generative AI error occurred: {}", e).color(Color::Red)
+                        format!("Command output: {}", output).color(Color::Magenta)
                     );
-                    continue;
-                }
-            };
+                    let llm_input = format!("User ran command '!{}' with output: {}", command, output);
+                    match chat_manager.lock().unwrap().send_message(&llm_input) {
+                        Ok(response) => display_response(&response),
+                        Err(e) => println!("{}", format!("Error: {}", e).color(Color::Red)),
+                    }
+                } else {
+                    let mut response = match chat_manager.lock().unwrap().send_message(user_input) {
+                        Ok(resp) => resp,
+                        Err(e) => {
+                            println!(
+                                "{}",
+                                format!("Error: A generative AI error occurred: {}", e).color(Color::Red)
+                            );
+                            continue;
+                        }
+                    };
 
-            display_response(&response);
+                    display_response(&response);
 
-            loop {
-                let tool_calls: Vec<(String, Value)> = response
-                    .get("candidates")
-                    .and_then(|c| c.as_array())
-                    .unwrap_or(&vec![])
-                    .iter()
-                    .flat_map(|candidate| {
-                        candidate
-                            .get("content")
-                            .and_then(|c| c.get("parts"))
-                            .and_then(|p| p.as_array())
-                            .map(|parts| {
-                                parts
-                                    .iter()
-                                    .filter_map(|part| {
-                                        part.get("functionCall").map(|fc| {
-                                            let name = fc
-                                                .get("name")
-                                                .and_then(|n| n.as_str())
-                                                .unwrap_or("")
-                                                .to_string();
-                                            let args = fc.get("args").cloned().unwrap_or(json!({}));
-                                            (name, args)
-                                        })
+                    loop {
+                        let tool_calls: Vec<(String, Value)> = response
+                            .get("candidates")
+                            .and_then(|c| c.as_array())
+                            .unwrap_or(&vec![])
+                            .iter()
+                            .flat_map(|candidate| {
+                                candidate
+                                    .get("content")
+                                    .and_then(|c| c.get("parts"))
+                                    .and_then(|p| p.as_array())
+                                    .map(|parts| {
+                                        parts
+                                            .iter()
+                                            .filter_map(|part| {
+                                                part.get("functionCall").map(|fc| {
+                                                    let name = fc
+                                                        .get("name")
+                                                        .and_then(|n| n.as_str())
+                                                        .unwrap_or("")
+                                                        .to_string();
+                                                    let args = fc.get("args").cloned().unwrap_or(json!({}));
+                                                    (name, args)
+                                                })
+                                            })
+                                            .collect::<Vec<_>>()
                                     })
-                                    .collect::<Vec<_>>()
+                                    .unwrap_or_default()
                             })
-                            .unwrap_or_default()
-                    })
-                    .collect();
+                            .collect();
 
-                if tool_calls.is_empty() {
-                    break;
-                }
-
-                let mut results = Vec::new();
-                for (func_name, args) in tool_calls {
-                    match func_name.as_str() {
-                        "execute_command" => {
-                            let command = args.get("command").and_then(|c| c.as_str());
-                            if let Some(cmd) = command {
-                                println!("Executing command: {}", cmd.color(Color::Magenta));
-                                let result = execute_command(cmd);
-                                results.push(format!("[Tool result] execute_command: {}", result));
-                            } else {
-                                results.push(
-                                    "[Tool error] execute_command: Missing 'command' parameter"
-                                        .to_string(),
-                                );
-                            }
+                        if tool_calls.is_empty() {
+                            break;
                         }
-                        "search_online" => {
-                            let query = args.get("query").and_then(|q| q.as_str());
-                            if let Some(q) = query {
-                                let result = search_online(q);
+
+                        let mut results = Vec::new();
+                        for (func_name, args) in tool_calls {
+                            match func_name.as_str() {
+                                "execute_command" => {
+                                    let command = args.get("command").and_then(|c| c.as_str());
+                                    if let Some(cmd) = command {
+                                        println!("Executing command: {}", cmd.color(Color::Magenta));
+                                        let result = execute_command(cmd);
+                                        results.push(format!("[Tool result] execute_command: {}", result));
+                                    } else {
+                                        results.push(
+                                            "[Tool error] execute_command: Missing 'command' parameter"
+                                                .to_string(),
+                                        );
+                                    }
+                                }
+                                "search_online" => {
+                                    let query = args.get("query").and_then(|q| q.as_str());
+                                    if let Some(q) = query {
+                                        let result = search_online(q);
                                 //println!("Search result: {}", result); // Log the raw result
-                                results.push(format!("[Tool result] search_online: {}", result));
-                            } else {
-                                results.push(
-                                    "[Tool error] search_online: Missing 'query' parameter"
-                                        .to_string(),
-                                );
-                            }
-                        }
-                        "scrape_url" => {
-                            let url = args.get("url").and_then(|u| u.as_str());
-                            if let Some(u) = url {
-                                let result = search::scrape_url(u);
-                                if result.starts_with("Error") || result.starts_with("Skipped") {
-                                    println!("Scrape failed: {}", result); // Log errors explicitly
+                                        results.push(format!("[Tool result] search_online: {}", result));
+                                    } else {
+                                        results.push(
+                                            "[Tool error] search_online: Missing 'query' parameter"
+                                                .to_string(),
+                                        );
+                                    }
                                 }
-                                results.push(format!("[Tool result] scrape_url: {}", result));
-                            } else {
-                                results.push(
-                                    "[Tool error] scrape_url: Missing 'url' parameter".to_string(),
-                                );
-                            }
-                        }
-                        "send_email" => {
-                            let subject = args.get("subject").and_then(|s| s.as_str());
-                            let body = args.get("body").and_then(|b| b.as_str());
-
-                            if let (Some(subj), Some(bod)) = (subject, body) {
-                                let result = send_email(subj, bod);
-                                results.push(format!("[Tool result] send_email: {}", result));
-                            } else {
-                                results.push(
-                                    "[Tool error] send_email: Missing required parameters"
-                                        .to_string(),
-                                );
-                            }
-                        }
-                        "alpha_vantage_query" => {
-                            let function = args.get("function").and_then(|f| f.as_str());
-                            let symbol = args.get("symbol").and_then(|s| s.as_str());
-                            if let (Some(func), Some(sym)) = (function, symbol) {
-                                match alpha_vantage_query(func, sym) {
-                                    Ok(result) => results.push(format!(
-                                        "[Tool result] alpha_vantage_query: {}",
-                                        result
-                                    )),
-                                    Err(e) => results
-                                        .push(format!("[Tool error] alpha_vantage_query: {}", e)),
+                                "scrape_url" => {
+                                    let url = args.get("url").and_then(|u| u.as_str());
+                                    if let Some(u) = url {
+                                        let result = search::scrape_url(u);
+                                        if result.starts_with("Error") || result.starts_with("Skipped") {
+                                            println!("Scrape failed: {}", result); // Log errors explicitly
+                                        }
+                                        results.push(format!("[Tool result] scrape_url: {}", result));
+                                    } else {
+                                        results.push(
+                                            "[Tool error] scrape_url: Missing 'url' parameter".to_string(),
+                                        );
+                                    }
                                 }
-                            } else {
-                                results.push(
-                                    "[Tool error] alpha_vantage_query: Missing required parameters"
-                                        .to_string(),
-                                );
-                            }
-                        }
-                        "file_editor" => {
-                            let subcommand = args.get("subcommand").and_then(|s| s.as_str());
-                            let filename = args.get("filename").and_then(|f| f.as_str());
-                            let data = args.get("data").and_then(|d| d.as_str());
-                            let replacement = args.get("replacement").and_then(|r| r.as_str());
+                                "send_email" => {
+                                    let subject = args.get("subject").and_then(|s| s.as_str());
+                                    let body = args.get("body").and_then(|b| b.as_str());
 
-                            if let (Some(subcmd), Some(fname)) = (subcommand, filename) {
-                                let result = file_editor(subcmd, fname, data, replacement);
-                                results.push(format!("[Tool result] file_editor: {}", result));
-                            } else {
-                                results.push("[Tool error] file_editor: Missing required parameters 'subcommand' or 'filename'".to_string());
+                                    if let (Some(subj), Some(bod)) = (subject, body) {
+                                        let result = send_email(subj, bod);
+                                        results.push(format!("[Tool result] send_email: {}", result));
+                                    } else {
+                                        results.push(
+                                            "[Tool error] send_email: Missing required parameters"
+                                                .to_string(),
+                                        );
+                                    }
+                                }
+                                "alpha_vantage_query" => {
+                                    let function = args.get("function").and_then(|f| f.as_str());
+                                    let symbol = args.get("symbol").and_then(|s| s.as_str());
+                                    if let (Some(func), Some(sym)) = (function, symbol) {
+                                        match alpha_vantage_query(func, sym) {
+                                            Ok(result) => results.push(format!(
+                                                "[Tool result] alpha_vantage_query: {}",
+                                                result
+                                            )),
+                                            Err(e) => results
+                                                .push(format!("[Tool error] alpha_vantage_query: {}", e)),
+                                        }
+                                    } else {
+                                        results.push(
+                                            "[Tool error] alpha_vantage_query: Missing required parameters"
+                                                .to_string(),
+                                        );
+                                    }
+                                }
+                                "file_editor" => {
+                                    let subcommand = args.get("subcommand").and_then(|s| s.as_str());
+                                    let filename = args.get("filename").and_then(|f| f.as_str());
+                                    let data = args.get("data").and_then(|d| d.as_str());
+                                    let replacement = args.get("replacement").and_then(|r| r.as_str());
+
+                                    if let (Some(subcmd), Some(fname)) = (subcommand, filename) {
+                                        let result = file_editor(subcmd, fname, data, replacement);
+                                        results.push(format!("[Tool result] file_editor: {}", result));
+                                    } else {
+                                        results.push("[Tool error] file_editor: Missing required parameters 'subcommand' or 'filename'".to_string());
+                                    }
+                                }
+                                _ => {
+                                    results.push(format!("[Tool error] Unknown function: {}", func_name));
+                                }
                             }
                         }
-                        _ => {
-                            results.push(format!("[Tool error] Unknown function: {}", func_name));
+
+                        if !results.is_empty() {
+                            let combined_results = results.join("\n");
+                    //println!("Sending to LLM: {}", combined_results); // Log what’s being sent
+                            response = match chat_manager.lock().unwrap().send_message(&combined_results) {
+                                Ok(resp) => resp,
+                                Err(e) => {
+                                    println!("{}", format!("Error: {}", e).color(Color::Red));
+                                    break;
+                                }
+                            };
+                            display_response(&response);
                         }
                     }
                 }
-
-                if !results.is_empty() {
-                    let combined_results = results.join("\n");
-                    //println!("Sending to LLM: {}", combined_results); // Log what’s being sent
-                    response = match chat_manager.lock().unwrap().send_message(&combined_results) {
-                        Ok(resp) => resp,
-                        Err(e) => {
-                            println!("{}", format!("Error: {}", e).color(Color::Red));
-                            break;
-                        }
-                    };
-                    display_response(&response);
-                }
+            },
+            Err(ReadlineError::Interrupted) => {
+                println!("{}", "Ctrl+C detected, exiting...".color(Color::Cyan));
+                break;
+            }
+            Err(ReadlineError::Eof) => {
+                println!("{}", "Ctrl+D detected, exiting...".color(Color::Cyan));
+                break;
+            }
+            Err(e) => {
+                println!("{}", format!("Input error: {}", e).color(Color::Red));
+                continue;
             }
         }
     }
