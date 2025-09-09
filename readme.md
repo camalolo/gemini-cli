@@ -20,19 +20,27 @@ Gemini is a Rust application that acts as a proactive assistant within a sandbox
 
 ## .env Setup
 
-To run Gemini, you need to set up a `.env` file in the project root directory with the following variables:
+To run Gemini, you need to set up a `.gemini` file in your home directory with the following variables:
 
 ```
 GEMINI_API_KEY=<YOUR_GEMINI_API_KEY>
 GOOGLE_SEARCH_API_KEY=<YOUR_GOOGLE_SEARCH_API_KEY>
 GOOGLE_SEARCH_ENGINE_ID=<YOUR_GOOGLE_SEARCH_ENGINE_ID>
 DESTINATION_EMAIL=<YOUR_DESTINATION_EMAIL>
+SMTP_SERVER_IP=localhost
+SENDER_EMAIL=<YOUR_SENDER_EMAIL>  # Optional, defaults to DESTINATION_EMAIL
+SMTP_USERNAME=<YOUR_SMTP_USERNAME>  # Optional, required for non-localhost servers
+SMTP_PASSWORD=<YOUR_SMTP_PASSWORD>  # Optional, required for non-localhost servers
 ```
 
 *   `GEMINI_API_KEY`: Your API key for the Gemini 2.0 Flash API.
 *   `GOOGLE_SEARCH_API_KEY`: Your API key for the Google Custom Search API.
 *   `GOOGLE_SEARCH_ENGINE_ID`: Your search engine ID for the Google Custom Search API.
 *   `DESTINATION_EMAIL`: The email address to which the `send_email` function will send emails.
+*   `SMTP_SERVER_IP`: The IP address or hostname of the SMTP server (defaults to localhost if not specified).
+*   `SENDER_EMAIL`: The email address to use as the sender (optional, defaults to DESTINATION_EMAIL).
+*   `SMTP_USERNAME`: Username for SMTP authentication (optional, required for non-localhost servers).
+*   `SMTP_PASSWORD`: Password for SMTP authentication (optional, required for non-localhost servers).
 
 **Note:** Ensure that you have the necessary API keys and permissions to use the Gemini 2.0 Flash API and the Google Custom Search API.
 
