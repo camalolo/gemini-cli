@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use std::env;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use dirs;
 
 // Declare and import the search module
 mod search;
@@ -52,9 +53,19 @@ struct ChatManager {
 impl ChatManager {
     fn new(api_key: String) -> Self {
         let today = Local::now().format("%Y-%m-%d").to_string();
+        let os_name = if cfg!(target_os = "windows") {
+            "Windows"
+        } else if cfg!(target_os = "macos") {
+            "macOS"
+        } else if cfg!(target_os = "linux") {
+            "Linux"
+        } else {
+            "Unix-like"
+        };
+
         let system_instruction = format!(
-            "Today's date is {}. You are a proactive assistant running in a sandboxed Linux terminal environment with a full set of command line utilities. Your role is to assist with coding tasks, file operations, online searches, email sending, and shell commands efficiently and decisively. Assume the current directory (the sandbox root) is the target for all commands. Take initiative to provide solutions, execute commands, and analyze results immediately without asking for confirmation unless the action is explicitly ambiguous (e.g., multiple repos) or potentially destructive (e.g., deleting files). Use the `execute_command` tool to interact with the system but only when needed. Deliver concise, clear responses. After running a command, always summarize its output immediately and proceed with logical next steps, without waiting for the user to prompt you further. When reading files or executing commands, summarize the results intelligently for the user without dumping raw output unless explicitly requested. Stay within the sandbox directory. Users can run shell commands directly with `!`, and you'll receive the output to assist further. Act confidently and anticipate the user's needs to streamline their workflow.",
-            today
+            "Today's date is {}. You are a proactive assistant running in a sandboxed {} terminal environment with a full set of command line utilities. Your role is to assist with coding tasks, file operations, online searches, email sending, and shell commands efficiently and decisively. Assume the current directory (the sandbox root) is the target for all commands. Take initiative to provide solutions, execute commands, and analyze results immediately without asking for confirmation unless the action is explicitly ambiguous (e.g., multiple repos) or potentially destructive (e.g., deleting files). Use the `execute_command` tool to interact with the system but only when needed. Deliver concise, clear responses. After running a command, always summarize its output immediately and proceed with logical next steps, without waiting for the user to prompt you further. When reading files or executing commands, summarize the results intelligently for the user without dumping raw output unless explicitly requested. Stay within the sandbox directory. Users can run shell commands directly with `!`, and you'll receive the output to assist further. Act confidently and anticipate the user's needs to streamline their workflow.",
+            today, os_name
         );
         ChatManager {
             api_key,
@@ -247,7 +258,11 @@ fn display_response(response: &Value) {
 }
 
 fn main() {
-    dotenv::from_path(format!("{}/.gemini", env!("HOME"))).ok();
+    let home_dir = dirs::home_dir()
+        .expect("Could not determine home directory")
+        .to_string_lossy()
+        .to_string();
+    dotenv::from_path(format!("{}/.gemini", home_dir)).ok();
     let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not found in ~/.gemini");
 
     let chat_manager = Arc::new(Mutex::new(ChatManager::new(api_key)));
