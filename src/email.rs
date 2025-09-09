@@ -7,8 +7,10 @@ use std::process::Command;
 use std::path::PathBuf;
 
 pub fn send_email(subject: &str, body: &str) -> String {
-    let recipient =
-        env::var("DESTINATION_EMAIL").expect("DESTINATION_EMAIL not found in ~/.gemini");
+    let recipient = match env::var("DESTINATION_EMAIL") {
+        Ok(val) => val,
+        Err(_) => return "DESTINATION_EMAIL environment variable not set. Please set it to the recipient's email address.".to_string(),
+    };
 
     #[cfg(target_os = "linux")]
     {
