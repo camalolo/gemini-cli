@@ -47,12 +47,26 @@ use file_edit::file_editor;
 use crate::spinner::Spinner; // Import the Spinner
 
 static SANDBOX_ROOT: Lazy<String> = Lazy::new(|| {
-    std::env::current_dir()
+    let path = std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from("."))
         .to_string_lossy()
-        .to_string()
+        .to_string();
+
+    // On Windows, canonicalize() adds \\?\ prefix, remove it for display
+    #[cfg(target_os = "windows")]
+    {
+        if path.starts_with("\\\\?\\") {
+            path[4..].to_string()
+        } else {
+            path
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        path
+    }
 });
 
 const COMPILE_TIME: &str = build_time_local!("%Y-%m-%d %H:%M:%S");
@@ -525,7 +539,17 @@ fn main() {
                 .sum()
         };
 
-        let prompt = format!("[{}] > ", conv_length).color(Color::Green).bold().to_string();
+        let prompt = {
+            #[cfg(target_os = "windows")]
+            {
+                // On Windows, avoid colored prompts due to rustyline compatibility issues
+                format!("[{}] > ", conv_length)
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                format!("[{}] > ", conv_length).color(Color::Green).bold().to_string()
+            }
+        };
 
         match rl.readline(&prompt) {
             Ok(user_input) => {
