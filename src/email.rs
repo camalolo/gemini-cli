@@ -1,6 +1,7 @@
 use chrono::Local;
 use std::env;
 use std::io::Write;
+#[cfg(not(target_os = "windows"))]
 use std::process::Command;
 #[cfg(target_os = "windows")]
 use std::path::PathBuf;
@@ -46,8 +47,8 @@ pub fn send_email(subject: &str, body: &str) -> String {
     #[cfg(target_os = "windows")]
     {
         // Create a temporary file for the email body in Windows temp directory
-        let temp_dir = env::temp_dir();
-        let temp_file = temp_dir.join(format!("email_body_{}.txt", Local::now().timestamp()));
+        let temp_dir: PathBuf = env::temp_dir();
+        let temp_file: PathBuf = temp_dir.join(format!("email_body_{}.txt", Local::now().timestamp()));
 
         if let Ok(mut file) = std::fs::File::create(&temp_file) {
             if let Err(e) = file.write_all(body.as_bytes()) {

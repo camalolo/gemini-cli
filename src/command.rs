@@ -2,8 +2,6 @@ use once_cell::sync::Lazy;
 use std::path::PathBuf;
 use std::process::Command;
 use std::str;
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 
 static SANDBOX_ROOT: Lazy<String> = Lazy::new(|| {
     std::env::current_dir()
