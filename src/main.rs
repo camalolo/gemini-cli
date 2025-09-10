@@ -71,6 +71,116 @@ static SANDBOX_ROOT: Lazy<String> = Lazy::new(|| {
 
 const COMPILE_TIME: &str = build_time_local!("%Y-%m-%d %H:%M:%S");
 
+fn detect_shell_info() -> String {
+    // Try to detect the actual shell and its version
+    if cfg!(target_os = "windows") {
+        // Check for MSYS/MINGW environments first (Git Bash, MSYS2, etc.)
+        if let Ok(msystem) = env::var("MSYSTEM") {
+            if !msystem.is_empty() {
+                // We're in a MSYS/MINGW environment (Git Bash, MSYS2, etc.)
+                let system_name = match msystem.as_str() {
+                    "MINGW64" => "Git Bash (MINGW64)",
+                    "MINGW32" => "Git Bash (MINGW32)",
+                    "MSYS" => "MSYS",
+                    _ => "MSYS/MINGW",
+                };
+
+                // Try to get bash version
+                if let Ok(version_output) = std::process::Command::new("bash")
+                    .arg("--version")
+                    .output()
+                {
+                    if version_output.status.success() {
+                        let output = String::from_utf8_lossy(&version_output.stdout);
+                        if let Some(first_line) = output.lines().next() {
+                            return format!("{} - {}", system_name, first_line);
+                        }
+                    }
+                }
+                return system_name.to_string();
+            }
+        }
+
+        // Check if we're running under bash (could be Git Bash without MSYSTEM set)
+        if let Ok(shell) = env::var("SHELL") {
+            if shell.contains("bash") || shell.contains("sh") {
+                // Try to get bash version
+                if let Ok(version_output) = std::process::Command::new("bash")
+                    .arg("--version")
+                    .output()
+                {
+                    if version_output.status.success() {
+                        let output = String::from_utf8_lossy(&version_output.stdout);
+                        if let Some(first_line) = output.lines().next() {
+                            return format!("Git Bash - {}", first_line);
+                        }
+                    }
+                }
+                return "Git Bash".to_string();
+            }
+        }
+
+        // Check for PowerShell
+        if let Ok(powershell_path) = env::var("PSModulePath") {
+            if !powershell_path.is_empty() {
+                // Try to get PowerShell version
+                if let Ok(version_output) = std::process::Command::new("powershell")
+                    .arg("-Command")
+                    .arg("$PSVersionTable.PSVersion.ToString()")
+                    .output()
+                {
+                    if version_output.status.success() {
+                        let version = String::from_utf8_lossy(&version_output.stdout).trim().to_string();
+                        return format!("PowerShell {}", version);
+                    }
+                }
+                return "PowerShell".to_string();
+            }
+        }
+
+        // Default to cmd.exe
+        "Command Prompt (cmd.exe)".to_string()
+    } else {
+        // On Unix-like systems, use SHELL environment variable
+        if let Ok(shell_path) = env::var("SHELL") {
+            // Extract shell name from path
+            let shell_name = std::path::Path::new(&shell_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("bash");
+
+            // Try to get version for common shells
+            let version_cmd = match shell_name {
+                "bash" => Some(("bash", vec!["--version"])),
+                "zsh" => Some(("zsh", vec!["--version"])),
+                "fish" => Some(("fish", vec!["--version"])),
+                "tcsh" | "csh" => Some((shell_name, vec!["--version"])),
+                "ksh" => Some((shell_name, vec!["--version"])),
+                _ => None,
+            };
+
+            if let Some((cmd, args)) = version_cmd {
+                if let Ok(version_output) = std::process::Command::new(cmd)
+                    .args(&args)
+                    .output()
+                {
+                    if version_output.status.success() {
+                        let output = String::from_utf8_lossy(&version_output.stdout);
+                        if let Some(first_line) = output.lines().next() {
+                            return first_line.to_string();
+                        }
+                    }
+                }
+            }
+
+            // Fallback to shell name
+            shell_name.to_string()
+        } else {
+            "bash".to_string()
+        }
+    }
+}
+
 struct ChatManager {
     api_key: String,
     history: Vec<Value>, // Stores user and assistant messages
@@ -92,9 +202,11 @@ impl ChatManager {
             "Unix-like"
         };
 
+        let shell_info = detect_shell_info();
+
         let system_instruction = format!(
-            "Today's date is {}. You are a proactive assistant running in a sandboxed {} terminal environment with a full set of command line utilities. Your role is to assist with coding tasks, file operations, online searches, email sending, and shell commands efficiently and decisively. Assume the current directory (the sandbox root) is the target for all commands. Take initiative to provide solutions, execute commands, and analyze results immediately without asking for confirmation unless the action is explicitly ambiguous (e.g., multiple repos) or potentially destructive (e.g., deleting files). Use the `execute_command` tool to interact with the system but only when needed. Deliver concise, clear responses. After running a command, always summarize its output immediately and proceed with logical next steps, without waiting for the user to prompt you further. When reading files or executing commands, summarize the results intelligently for the user without dumping raw output unless explicitly requested. Stay within the sandbox directory. Users can run shell commands directly with `!`, and you'll receive the output to assist further. Act confidently and anticipate the user's needs to streamline their workflow.",
-            today, os_name
+            "Today's date is {}. You are a proactive assistant running in a sandboxed {} terminal environment with a full set of command line utilities. The default shell is {}. Your role is to assist with coding tasks, file operations, online searches, email sending, and shell commands efficiently and decisively. Assume the current directory (the sandbox root) is the target for all commands. Take initiative to provide solutions, execute commands, and analyze results immediately without asking for confirmation unless the action is explicitly ambiguous (e.g., multiple repos) or potentially destructive (e.g., deleting files). Use the `execute_command` tool to interact with the system but only when needed. Deliver concise, clear responses. After running a command, always summarize its output immediately and proceed with logical next steps, without waiting for the user to prompt you further. When reading files or executing commands, summarize the results intelligently for the user without dumping raw output unless explicitly requested. Stay within the sandbox directory. Users can run shell commands directly with `!`, and you'll receive the output to assist further. Act confidently and anticipate the user's needs to streamline their workflow.",
+            today, os_name, shell_info
         );
         ChatManager {
             api_key,
