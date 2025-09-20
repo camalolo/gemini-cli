@@ -443,9 +443,18 @@ fn process_tool_calls(response: &Value, chat_manager: &Arc<Mutex<ChatManager>>, 
                 "execute_command" => {
                     let command = args.get("command").and_then(|c| c.as_str());
                     if let Some(cmd) = command {
-                        println!("Executing command: {}", cmd.color(Color::Magenta));
-                        let result = execute_command(cmd);
-                        results.push(format!("[Tool result] execute_command: {}", result));
+                        println!("LLM wants to execute command: {} | Confirm execution? (y/n)", cmd.color(Color::Magenta));
+                        let mut input = String::new();
+                        std::io::stdin().read_line(&mut input).expect("Failed to read input");
+                        let input = input.trim().to_lowercase();
+                        if input == "y" || input == "yes" {
+                            println!("Executing command: {}", cmd.color(Color::Magenta));
+                            let result = execute_command(cmd);
+                            results.push(format!("[Tool result] execute_command: {}", result));
+                        } else {
+                            //println!("Command execution rejected by user.");
+                            results.push("[Tool result] execute_command: User rejected the command execution.".to_string());
+                        }
                     } else {
                         results.push(
                             "[Tool error] execute_command: Missing 'command' parameter"
