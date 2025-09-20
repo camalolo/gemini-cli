@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use dirs;
 
 #[derive(Parser)]
-#[command(name = "gemini")]
+#[command(name = "gemini-cli")]
 #[command(about = "A proactive assistant for coding tasks")]
 struct Args {
     /// Single prompt to send to the LLM and exit
@@ -343,7 +343,7 @@ impl ChatManager {
         spinner.start();
 
         let response = client
-            .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent")
+            .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
             .query(&[("key", &self.api_key)])
             .json(&body)
             .send()
