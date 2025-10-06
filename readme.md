@@ -1,8 +1,8 @@
-# Gemini
+# Gemini CLI
 
 ## Description
 
-Gemini is a Rust application that acts as a proactive assistant within a sandboxed Linux terminal environment. It leverages the Gemini 2.0 Flash API to assist with coding tasks, file operations, online searches, email sending, and shell commands. The application takes initiative to provide solutions, execute commands, and analyze results without explicit user confirmation, unless the action is ambiguous or potentially destructive.
+Gemini CLI is a Rust application that acts as a proactive assistant within a sandboxed multi-platform terminal environment. It leverages the Gemini 2.5 Flash API to assist with coding tasks, file operations, online searches, email sending, and shell commands. The application takes initiative to provide solutions, execute commands, and analyze results without explicit user confirmation, unless the action is ambiguous or potentially destructive.
 
 ## Functionality
 
@@ -16,11 +16,16 @@ Gemini is a Rust application that acts as a proactive assistant within a sandbox
 ## Modules
 
 *   `src/main.rs`: Contains the main application logic, including the chat interface, tool execution, and API interaction.
-*   `src/search.rs`: Implements the online search functionality using the Google Custom Search API.
+*   `src/search.rs`: Implements the online search functionality using the Google Custom Search API and web scraping capabilities.
+*   `src/command.rs`: Handles system command execution with sandboxing and security considerations.
+*   `src/email.rs`: Manages email sending functionality with SMTP support.
+*   `src/alpha_vantage.rs`: Provides integration with the Alpha Vantage API for financial data.
+*   `src/file_edit.rs`: Implements file editing capabilities including reading, writing, searching, and applying diffs.
+*   `src/spinner.rs`: Provides a loading spinner for visual feedback during operations.
 
-## .env Setup
+## Configuration Setup
 
-To run Gemini, you need to set up a `.gemini` file in your home directory with the following variables:
+To run Gemini CLI, you need to set up a `.gemini` file in your home directory with the following variables:
 
 ```
 GEMINI_API_KEY=<YOUR_GEMINI_API_KEY>
@@ -53,7 +58,7 @@ SMTP_PASSWORD=<YOUR_SMTP_PASSWORD>  # Optional, required for non-localhost serve
     cd gemini
     ```
 
-2.  Create a `.env` file in the project root directory and set the required environment variables as described in the `.env Setup` section.
+2.  Create a `.gemini` file in your home directory and set the required environment variables as described in the Configuration Setup section.
 
 3.  Run the application:
 
