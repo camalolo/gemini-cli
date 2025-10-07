@@ -554,6 +554,34 @@ fn process_tool_calls(response: &Value, chat_manager: &Arc<Mutex<ChatManager>>, 
     Ok(())
 }
 
+fn interactive_shell() -> String {
+    println!("{}", "Entering interactive shell mode. Type 'exit' to return.".color(Color::Cyan));
+    let mut accumulated_output = String::new();
+    loop {
+        print!("shell> ");
+        io::stdout().flush().expect("Failed to flush stdout");
+
+        let mut input = String::new();
+        match io::stdin().read_line(&mut input) {
+            Ok(_) => {
+                let input = input.trim();
+                if input == "exit" {
+                    break;
+                }
+                let output = execute_command(input);
+                println!("{}", output.color(Color::Magenta));
+                accumulated_output.push_str(&format!("Command: {}\nOutput: {}\n\n", input, output));
+            }
+            Err(e) => {
+                println!("{}", format!("Input error: {}", e).color(Color::Red));
+                break;
+            }
+        }
+    }
+    println!("{}", "Exiting interactive shell mode.".color(Color::Cyan));
+    accumulated_output
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -632,7 +660,7 @@ fn main() {
     );
     println!(
         "{}",
-        "Use !command to run shell commands directly (e.g., !ls or !dir).".color(Color::Cyan)
+        "Use !command to run shell commands directly (e.g., !ls or !dir). Use ! alone to enter interactive shell mode.".color(Color::Cyan)
     );
     println!();
 
@@ -703,19 +731,23 @@ fn main() {
                 if user_input.starts_with('!') {
                     let command = user_input[1..].trim();
                     if command.is_empty() {
-                        println!("{}", "No command provided after '!'.".color(Color::Red));
-                        println!();
-                        continue;
-                    }
-                    let output = execute_command(command);
-                    println!(
-                        "{}",
-                        format!("Command output: {}", output).color(Color::Magenta)
-                    );
-                    let llm_input = format!("User ran command '!{}' with output: {}", command, output);
-                    match chat_manager.lock().unwrap().send_message(&llm_input) {
-                        Ok(response) => display_response(&response),
-                        Err(e) => println!("{}", format!("Error: {}", e).color(Color::Red)),
+                        let output = interactive_shell();
+                        let llm_input = format!("User ran interactive shell session with output:\n{}", output);
+                        match chat_manager.lock().unwrap().send_message(&llm_input) {
+                            Ok(response) => display_response(&response),
+                            Err(e) => println!("{}", format!("Error: {}", e).color(Color::Red)),
+                        }
+                    } else {
+                        let output = execute_command(command);
+                        println!(
+                            "{}",
+                            format!("Command output: {}", output).color(Color::Magenta)
+                        );
+                        let llm_input = format!("User ran command '!{}' with output: {}", command, output);
+                        match chat_manager.lock().unwrap().send_message(&llm_input) {
+                            Ok(response) => display_response(&response),
+                            Err(e) => println!("{}", format!("Error: {}", e).color(Color::Red)),
+                        }
                     }
                 } else {
                     let response = match chat_manager.lock().unwrap().send_message(user_input) {
