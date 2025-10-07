@@ -7,9 +7,7 @@ use ctrlc;
 use dotenv::from_path;
 use once_cell::sync::Lazy;
 use reqwest::blocking::Client;
-use rustyline::error::ReadlineError;
-use rustyline::Editor;
-use rustyline::history::DefaultHistory;
+use std::io::{self, Write};
 use serde_json::{json, Value};
 use std::env;
 use std::path::PathBuf;
@@ -638,7 +636,7 @@ fn main() {
     );
     println!();
 
-    let mut rl = Editor::<(), DefaultHistory>::new().expect("Failed to initialize rustyline");
+    // Simple input handling for better Windows compatibility
     loop {
         let conv_length: usize = {
             let manager = chat_manager.lock().unwrap();
@@ -663,7 +661,7 @@ fn main() {
         let prompt = {
             #[cfg(target_os = "windows")]
             {
-                // On Windows, avoid colored prompts due to rustyline compatibility issues
+                // On Windows, avoid colored prompts due to compatibility issues
                 format!("[{}] > ", conv_length)
             }
             #[cfg(not(target_os = "windows"))]
@@ -672,10 +670,13 @@ fn main() {
             }
         };
 
-        match rl.readline(&prompt) {
-            Ok(user_input) => {
+        print!("{}", prompt);
+        io::stdout().flush().expect("Failed to flush stdout");
+
+        let mut user_input = String::new();
+        match io::stdin().read_line(&mut user_input) {
+            Ok(_) => {
                 let user_input = user_input.trim();
-                println!();
 
                 match user_input.to_lowercase().as_str() {
                     "exit" => {
@@ -734,14 +735,6 @@ fn main() {
                         println!("{}", format!("Error processing tool calls: {}", e).color(Color::Red));
                     }
                 }
-            },
-            Err(ReadlineError::Interrupted) => {
-                println!("{}", "Ctrl+C detected, exiting...".color(Color::Cyan));
-                break;
-            }
-            Err(ReadlineError::Eof) => {
-                println!("{}", "Ctrl+D detected, exiting...".color(Color::Cyan));
-                break;
             }
             Err(e) => {
                 println!("{}", format!("Input error: {}", e).color(Color::Red));
