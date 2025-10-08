@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use dirs;
 
 #[derive(Parser)]
-#[command(name = "gemini-cli")]
+#[command(name = "gemini-cli-rs")]
 #[command(about = "A proactive assistant for coding tasks")]
 struct Args {
     /// Single prompt to send to the LLM and exit
@@ -589,8 +589,8 @@ fn main() {
         .expect("Could not determine home directory")
         .to_string_lossy()
         .to_string();
-    dotenv::from_path(format!("{}/.gemini", home_dir)).ok();
-    let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not found in ~/.gemini");
+    dotenv::from_path(format!("{}/.gemini.conf", home_dir)).ok();
+    let api_key = env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY not found in ~/.gemini.conf");
     let smtp_server = env::var("SMTP_SERVER_IP").unwrap_or_else(|_| "localhost".to_string());
 
     // Debug output for SMTP configuration

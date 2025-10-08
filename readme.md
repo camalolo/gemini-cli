@@ -1,8 +1,8 @@
-# Gemini CLI
+# Gemini CLI-RS
 
 ## Description
 
-Gemini CLI is a Rust application that acts as a proactive assistant within a sandboxed multi-platform terminal environment. It leverages the Gemini 2.5 Flash API to assist with coding tasks, file operations, online searches, email sending, and shell commands. The application takes initiative to provide solutions, execute commands, and analyze results without explicit user confirmation, unless the action is ambiguous or potentially destructive.
+Gemini CLI-RS is a Rust application that acts as a proactive assistant within a sandboxed multi-platform terminal environment. It leverages the Gemini 2.5 Flash API to assist with coding tasks, file operations, online searches, email sending, and shell commands. The application takes initiative to provide solutions, execute commands, and analyze results without explicit user confirmation, unless the action is ambiguous or potentially destructive.
 
 ## Functionality
 
@@ -25,7 +25,7 @@ Gemini CLI is a Rust application that acts as a proactive assistant within a san
 
 ## Configuration Setup
 
-To run Gemini CLI, you need to set up a `.gemini` file in your home directory with the following variables:
+To run Gemini CLI-RS, you need to set up a `.gemini` file in your home directory with the following variables:
 
 ```
 GEMINI_API_KEY=<YOUR_GEMINI_API_KEY>
@@ -55,7 +55,7 @@ SMTP_PASSWORD=<YOUR_SMTP_PASSWORD>  # Optional, required for non-localhost serve
 
     ```bash
     git clone <repository_url>
-    cd gemini
+    cd gemini-cli-rs
     ```
 
 2.  Create a `.gemini` file in your home directory and set the required environment variables as described in the Configuration Setup section.
